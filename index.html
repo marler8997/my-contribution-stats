@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GitHub Contribution Analysis — marler8997</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+  h1 { color: #58a6ff; margin-bottom: 5px; }
+  .subtitle { color: #8b949e; margin-bottom: 20px; }
+  .chart-container { position: relative; width: 100%; height: 400px; margin-bottom: 30px; }
+  .stats { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 20px; }
+  .stat-box .value { font-size: 24px; font-weight: bold; color: #58a6ff; }
+  .stat-box .label { color: #8b949e; font-size: 13px; }
+  .note { color: #8b949e; font-size: 12px; font-style: italic; }
+  canvas { background: #0d1117; }
+</style>
+</head>
+<body>
+<h1>GitHub Contribution Analysis</h1>
+<p class="subtitle">marler8997 — Lines changed per day, color-coded by repository</p>
+
+<div class="stats" id="stats"></div>
+
+<h2>Monthly Totals</h2>
+<div class="chart-container"><canvas id="monthlyChart"></canvas></div>
+
+<h2>Daily Lines Changed (additions + deletions) by Repository</h2>
+<div class="chart-container"><canvas id="mainChart"></canvas></div>
+
+<h2>Weekly Rolling Average (LOC/day)</h2>
+<div class="chart-container"><canvas id="rollingChart"></canvas></div>
+
+<script>
+fetch('data/chart_data.json').then(r => r.json()).then(data => {
+  const filteredRepos = ['marlersoft/zigwin32', 'marlersoft/win32json'];
+  // Adjust specific commits by SHA: override adds/dels for outlier commits
+  // (e.g. bulk deletes of vendored files that inflate the graph)
+  const adjustedCommits = {
+    '9cd6f564ab3de69b071388745bb3ea53baa3e9fd': { adds: 7, dels: 0 },     // zware: bulk delete of vendored files
+    'bcb64e083bc7c800e6add5132151c9e9da815a71': { adds: 90, dels: 0 },    // zware: bulk delete of vendored files
+    'e858408f8872cd204eb65340c6dca3c4c377fa2e': { adds: 0, dels: 0 },     // tupleapp/app: merge commit for "remove linux app"
+    '90237ca52a6954900c9254f3c498c3a3d3d523ec': { adds: 15, dels: 0 },    // tupleapp/app: remove linux app (bulk delete)
+    '8b76517f56f1554cf288b74f97428cae3957f74a': { adds: 0, dels: 0 },     // tupleapp/app: miniaudio vendored lib update (0.11.9 -> 0.11.21)
+    '3686d4081b883f0b77111e4cb43de3c3f6dec864': { adds: 0, dels: 0 },     // tupleapp/app: normalize line endings (whitespace only)
+    '089934be8c5f58a79bb0867466c3b08d237a60d4': { adds: 38, dels: 46 },    // tupleapp/app: removed vendored xxhash.h (7,048 lines)
+    'ae8a5be160d80e6775c520121215cf00d40b06e3': { adds: 0, dels: 0 },     // zipcmdline: merge commit duplicate of backport PR
+  };
+  const dates = data.dates;
+  const repos = data.repos.filter(r => !filteredRepos.includes(r));
+  // Apply filters and adjustments to day data
+  for (const d of dates) {
+    if (data.data[d]) {
+      for (const r of filteredRepos) delete data.data[d][r];
+    }
+    // Walk commits for this day, apply SHA-based adjustments
+    if (data.commits[d]) {
+      for (const [sha, repo, origAdds, origDels] of data.commits[d]) {
+        if (adjustedCommits[sha]) {
+          const adj = adjustedCommits[sha];
+          const delta = (origAdds + origDels) - (adj.adds + adj.dels);
+          const key = repos.includes(repo) ? repo : 'other';
+          if (data.data[d] && data.data[d][key] !== undefined) {
+            data.data[d][key] = Math.max(0, data.data[d][key] - delta);
+          }
+        }
+      }
+    }
+  }
+
+  // Color palette — generate enough for all repos
+  const baseColors = [
+    '#58a6ff', '#f78166', '#3fb950', '#d2a8ff', '#79c0ff',
+    '#ffa657', '#7ee787', '#ff7b72', '#d29922', '#a5d6ff',
+    '#56d364', '#e3b341', '#bc8cff', '#6cb6ff', '#f0883e',
+    '#8b949e', '#c9d1d9', '#da3633', '#238636', '#1f6feb',
+    '#484f58', '#f47067', '#a371f7', '#57ab5a', '#cc6b2c',
+    '#768390', '#6cb6ff', '#e6edf3', '#b392f0', '#ffdf5d',
+  ];
+  const colors = repos.map((_, i) => baseColors[i % baseColors.length]);
+
+  // Build datasets
+  const datasets = repos.map((repo, i) => ({
+    label: repo,
+    data: dates.map(d => (data.data[d] && data.data[d][repo]) || 0),
+    backgroundColor: colors[i % colors.length],
+    borderWidth: 0,
+  }));
+
+  // Stats
+  let totalLoc = 0, totalDays = 0, activeDays = 0, peakDay = 0, peakDate = '';
+  dates.forEach((d, i) => {
+    let dayTotal = 0;
+    repos.forEach(r => { dayTotal += (data.data[d] && data.data[d][r]) || 0; });
+    totalLoc += dayTotal;
+    totalDays++;
+    if (dayTotal > 0) activeDays++;
+    if (dayTotal > peakDay) { peakDay = dayTotal; peakDate = d; }
+  });
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-box"><div class="value">${(totalLoc).toLocaleString()}</div><div class="label">Total lines changed</div></div>
+    <div class="stat-box"><div class="value">${activeDays}</div><div class="label">Active days (of ${totalDays})</div></div>
+    <div class="stat-box"><div class="value">${Math.round(totalLoc / activeDays).toLocaleString()}</div><div class="label">Avg LOC / active day</div></div>
+    <div class="stat-box"><div class="value">${peakDay.toLocaleString()}</div><div class="label">Peak day (${peakDate})</div></div>
+    <div class="stat-box"><div class="value">${repos.length}</div><div class="label">Repositories</div></div>
+  `;
+
+  const commonOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: true, position: 'bottom', labels: { color: '#8b949e', boxWidth: 12, font: { size: 10 } } },
+      tooltip: {
+        mode: 'index',
+        callbacks: {
+          label: ctx => ctx.raw > 0 ? `${ctx.dataset.label}: ${ctx.raw.toLocaleString()} lines` : null,
+          title: items => items[0].label,
+          afterBody: items => {
+            const total = items.reduce((s, i) => s + i.raw, 0);
+            return `\nTotal: ${total.toLocaleString()} lines`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        type: 'category',
+        ticks: { color: '#8b949e', maxTicksLimit: 24, font: { size: 10 } },
+        grid: { color: '#21262d' }
+      },
+      y: {
+        stacked: true,
+        ticks: { color: '#8b949e', callback: v => v.toLocaleString() },
+        grid: { color: '#21262d' }
+      }
+    }
+  };
+
+  // Main chart (full scale)
+  new Chart(document.getElementById('mainChart'), {
+    type: 'bar',
+    data: { labels: dates, datasets: JSON.parse(JSON.stringify(datasets)) },
+    options: { ...commonOpts, scales: { ...commonOpts.scales, x: { ...commonOpts.scales.x, stacked: true }, y: { ...commonOpts.scales.y, stacked: true } } }
+  });
+
+
+  // Monthly totals (stacked bar by repo)
+  const months = [...new Set(dates.map(d => d.slice(0, 7)))].sort();
+  const monthlyData = {};
+  for (const d of dates) {
+    const m = d.slice(0, 7);
+    if (!monthlyData[m]) monthlyData[m] = {};
+    for (const repo of repos) {
+      const val = (data.data[d] && data.data[d][repo]) || 0;
+      monthlyData[m][repo] = (monthlyData[m][repo] || 0) + val;
+    }
+  }
+
+  const monthlyDatasets = repos.map((repo, i) => ({
+    label: repo,
+    data: months.map(m => monthlyData[m][repo] || 0),
+    backgroundColor: colors[i % colors.length],
+    borderWidth: 0,
+  }));
+
+  new Chart(document.getElementById('monthlyChart'), {
+    type: 'bar',
+    data: { labels: months, datasets: monthlyDatasets },
+    options: {
+      ...commonOpts,
+      scales: {
+        ...commonOpts.scales,
+        x: { ...commonOpts.scales.x, stacked: true },
+        y: { ...commonOpts.scales.y, stacked: true, ticks: { color: '#8b949e', callback: v => (v/1000).toLocaleString() + 'k' } }
+      }
+    }
+  });
+
+  // Rolling 7-day average
+  const dailyTotals = dates.map((d, i) => repos.reduce((s, r, j) => s + datasets[j].data[i], 0));
+  const rolling = dailyTotals.map((_, i) => {
+    const window = dailyTotals.slice(Math.max(0, i - 6), i + 1);
+    return Math.round(window.reduce((a, b) => a + b, 0) / window.length);
+  });
+
+  new Chart(document.getElementById('rollingChart'), {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: [{
+        label: '7-day rolling avg LOC/day',
+        data: rolling,
+        backgroundColor: '#58a6ff',
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      ...commonOpts,
+      scales: {
+        ...commonOpts.scales,
+        y: { ...commonOpts.scales.y, stacked: false, ticks: { color: '#8b949e', callback: v => v.toLocaleString() } }
+      },
+      plugins: { ...commonOpts.plugins, legend: { display: false } }
+    }
+  });
+});
+</script>
+</body>
+</html>

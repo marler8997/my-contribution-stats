@@ -1,0 +1,1 @@
+An analysis of my contributions to GitHub over the last couple years.  The goal is to see if my use of AI has changed my development speed.  I think I really started using AI alot more around November 2025 and even more around February 2026.
